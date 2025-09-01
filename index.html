@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Itinéraire </title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css" />
+    <style>
+        #map { 
+            height: 400px; 
+            margin-bottom: 20px;
+        }
+        input, button { 
+            margin: 5px; 
+            padding: 8px; 
+            border-radius: 4px; 
+            border: 1px solid #ccc; 
+        }
+        input { 
+            width: 80%; 
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            cursor: pointer;
+            border: none;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .form-section {
+            margin: 10px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        h3 {
+            margin-top: 0;
+        }
+        .chauffeur-marker {
+            background-color: #ff9900;
+            border-radius: 50%;
+            width: 12px;
+            height: 12px;
+            display: inline-block;
+            margin-right: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Service d'itinéraire avec gestion des chauffeurs</h1>
+        
+        <div class="form-section">
+            <h3>Enregistrement d'un chauffeur</h3>
+            <input id="nomChauffeur" type="text" placeholder="Nom du chauffeur" />
+            <input id="telChauffeur" type="text" placeholder="Téléphone" />
+            <input id="mdpChauffeur" type="password" placeholder="Mot de passe" />
+            <button onclick="enregistrerChauffeur()">Enregistrer le chauffeur</button>
+        </div>
+        
+        <div class="form-section">
+            <h3>Calcul d'itinéraire</h3>
+            <input id="destination" type="text" placeholder="Entrer votre destination (ex: Bonaberi, Douala)" />
+            <button onclick="tracerItineraire()">Tracer Itinéraire</button>
+        </div>
+        
+        <div id="map"></div>
+        <div id="info-chauffeurs"></div>
+    </div>
+
+    <script>
+        let map = L.map('map').setView([0, 0], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
+
+        let maPosition;
+        let control;
+        let chauffeurs = []; // Stocke les informations des chauffeurs
+        let chauffeurMarkers = {}; // Stocke les marqueurs des chauffeurs (id -> marker)
+
+        // Récupérer la position actuelle
+        navigator.geolocation.getCurrentPosition(pos => {
+            maPosition = [pos.coords.latitude, pos.coords.longitude];
+            map.setView(maPosition, 13);
+            L.marker(maPosition)
+                .addTo(map)
+                .bindPopup("Ma position actuelle")
+                .openPopup();
+        }, erreur => {
+            console.error("Erreur de géolocalisation: ", erreur);
+            // Position par défaut (Douala) si la géolocalisation échoue
+            maPosition = [4.0511, 9.7679];
+            map.setView(maPosition, 13);
+            L.marker(maPosition)
+                .addTo(map)
+                .bindPopup("Position par défaut (Douala)")
+                .openPopup();
+        });
+
+        // Fonction pour enregistrer un chauffeur avec sa position actuelle
+        function enregistrerChauffeur() {
+            let nom = document.getElementById('nomChauffeur').value;
+            let telephone = document.getElementById('telChauffeur').value;
+            let mdp = document.getElementById('mdpChauffeur').value;
+            
+            if (!nom || !telephone || !mdp) {
+                alert("Veuillez remplir tous les champs !");
+                return;
+            }
+            
+            // Récupérer la position actuelle du chauffeur
+            navigator.geolocation.getCurrentPosition(pos => {
+                let position = [pos.coords.latitude, pos.coords.longitude];
+                
+                // Créer un objet chauffeur
+                let chauffeur = {
+                    id: Date.now(), // ID unique basé sur le timestamp
+                    nom: nom,
+                    telephone: telephone,
+                    position: position,
+                    dateEnregistrement: new Date().toLocaleString()
+                };
+                
+                // Ajouter à la liste des chauffeurs
+                chauffeurs.push(chauffeur);
+                
+                // Ajouter un marqueur pour ce chauffeur
+                ajouterMarqueurChauffeur(chauffeur);
+                
+                // Mettre à jour l'affichage de la liste
+                afficherChauffeurs();
+                
+                // Réinitialiser le formulaire
+                document.getElementById('nomChauffeur').value = '';
+                document.getElementById('telChauffeur').value = '';
+                document.getElementById('mdpChauffeur').value = '';
+                
+                alert("Chauffeur enregistré avec succès !");
+            }, erreur => {
+                console.error("Erreur de géolocalisation pour le chauffeur: ", erreur);
+                alert("Impossible de récupérer la position du chauffeur. Veuillez vérifier les permissions de géolocalisation.");
+            });
+        }
+        
+        // Fonction pour ajouter un marqueur pour un chauffeur
+        function ajouterMarqueurChauffeur(chauffeur) {
+            // Créer une icône personnalisée pour les chauffeurs
+            let chauffeurIcon = L.divIcon({
+                className: 'chauffeur-icon',
+                html: `<div style="background-color: #ff9900; border-radius: 50%; width: 12px; height: 12px;"></div>`,
+                iconSize: [12, 12],
+                iconAnchor: [6, 6]
+            });
+            
+            // Ajouter le marqueur à la carte
+            let marker = L.marker(chauffeur.position, {icon: chauffeurIcon})
+                .addTo(map)
+                .bindPopup(`
+                    <b>Chauffeur:</b> ${chauffeur.nom}<br>
+                    <b>Téléphone:</b> ${chauffeur.telephone}<br>
+                    <b>Position:</b> ${chauffeur.position[0].toFixed(4)}, ${chauffeur.position[1].toFixed(4)}<br>
+                    <b>Enregistré le:</b> ${chauffeur.dateEnregistrement}
+                `);
+            
+            // Stocker le marqueur dans notre objet
+            chauffeurMarkers[chauffeur.id] = marker;
+        }
+        
+        // Fonction pour afficher la liste des chauffeurs
+        function afficherChauffeurs() {
+            let infoDiv = document.getElementById('info-chauffeurs');
+            infoDiv.innerHTML = '<h3>Chauffeurs enregistrés</h3>';
+            
+            if (chauffeurs.length === 0) {
+                infoDiv.innerHTML += '<p>Aucun chauffeur enregistré</p>';
+                return;
+            }
+            
+            let liste = document.createElement('ul');
+            chauffeurs.forEach(chauffeur => {
+                let item = document.createElement('li');
+                item.innerHTML = `
+                    <span class="chauffeur-marker"></span>
+                    <b>${chauffeur.nom}</b> - ${chauffeur.telephone} 
+                    (Position: ${chauffeur.position[0].toFixed(4)}, ${chauffeur.position[1].toFixed(4)})
+                    <button onclick="centrerSurChauffeur(${chauffeur.id})">Voir sur carte</button>
+                `;
+                liste.appendChild(item);
+            });
+            
+            infoDiv.appendChild(liste);
+        }
+        
+        // Fonction pour centrer la carte sur un chauffeur
+        function centrerSurChauffeur(id) {
+            let chauffeur = chauffeurs.find(c => c.id === id);
+            if (chauffeur) {
+                map.setView(chauffeur.position, 15);
+                chauffeurMarkers[id].openPopup();
+            }
+        }
+
+        // Fonction pour géocoder la destination et tracer l'itinéraire
+        function tracerItineraire() {
+            let adresse = document.getElementById('destination').value;
+            if (!adresse) {
+                alert("Veuillez entrer une adresse !");
+                return;
+            }
+
+            // Vérifier que nous avons une position de départ
+            if (!maPosition) {
+                alert("Impossible de déterminer votre position. Veuillez réessayer.");
+                return;
+            }
+
+            // Appel à l'API Nominatim pour obtenir les coordonnées
+            fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(adresse)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.length === 0) {
+                        alert("Adresse introuvable !");
+                        return;
+                    }
+
+                    let lat = parseFloat(data[0].lat);
+                    let lon = parseFloat(data[0].lon);
+
+                    // Supprimer l'ancien itinéraire s'il existe
+                    if (control) {
+                        map.removeControl(control);
+                    }
+
+                    // Tracer l'itinéraire avec Leaflet Routing Machine
+                    control = L.Routing.control({
+                        waypoints: [
+                            L.latLng(maPosition[0], maPosition[1]),
+                            L.latLng(lat, lon)
+                        ],
+                        routeWhileDragging: true,
+                        lineOptions: {
+                            styles: [
+                                { color: 'blue', weight: 6, opacity: 0.8 }
+                            ]
+                        },
+                        show: true,
+                        addWaypoints: false,
+                        routeLine: function(route) {
+                            return L.polyline(route.coordinates, {
+                                color: 'blue',
+                                weight: 4,
+                                opacity: 0.7
+                            });
+                        }
+                    }).addTo(map);
+                    
+                    // Ajouter un marqueur pour la destination
+                    L.marker([lat, lon])
+                        .addTo(map)
+                        .bindPopup(`Destination: ${adresse}`)
+                        .openPopup();
+                })
+                .catch(error => {
+                    console.error("Erreur : ", error);
+                    alert("Une erreur s'est produite lors du calcul de l'itinéraire.");
+                });
+        }
+        
+        // Afficher les chauffeurs au chargement (s'il y en a)
+        afficherChauffeurs();
+    </script>
+</body>
+</html>
